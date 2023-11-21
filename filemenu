@@ -1,0 +1,143 @@
+#!/bin/bash
+
+#Author:	Jacob Tkeio (jacobtkeio@gmail.com)
+#Date:		8/3/2023
+
+#Utility to create a menu out of a list of files.
+#Meant primarily for use with 'find' to create
+#useful alias commands.
+
+
+usage="Usage: $0 [OPTION]...
+
+Creates a menu from files passed through standard input.
+By default, the menu is sorted by time since last edit.
+
+Choosing a file from the menu will open a subshell in 
+	its directory. Exiting the subshell will return
+	the user to the original shell.
+To exit the menu prompt, type 'e'.
+
+OPTION is one of
+	-r, --resume	Do not prompt; cd to last-active file.
+	-z, --reverse	Display least-recently edited files first.
+	-p, --persist	Redisplay menu after subshell exit.
+	-h, --help      Print this help message.
+
+If --resume and --persist are both set, cd to every file
+	successively, continuing to the next on subshell exit.
+To stop cascading early, press Ctrl-D then Ctrl-C quickly."
+
+
+while (( $# > 0 )); do 
+	case $1 in
+		(-h | --help)       echo "$usage"; exit 0 ;;
+		(-r | --resume)     resume=amongus ;;
+		(-p | --persist)	persist=imposter ;;
+		(-z | --reverse)	reverse=sus ;;
+		(-*)                echo "Invalid option $1"; exit 1 ;;
+		(*)                 echo "Unknown argument $1" ;;
+	esac
+	shift
+done
+
+
+n=0
+while true; do
+	case $n in
+		(0)	filemenutmp=~/tmp/filemenu.tmp ;;
+		(1)	filemenutmp=/tmp/"${USER}"_filemenu.tmp ;;
+		(2)	filemenutmp=~/filemenu.tmp ;;
+		(*)	echo "Unable to create tmp file at ~/tmp, /tmp, or ~"; exit 1 ;;
+	esac
+
+	n=$((n+1))
+
+	touch "${filemenutmp}" 2>/dev/null || continue
+	>"${filemenutmp}" && break 
+done
+
+trap "[ -e "${filemenutmp}" ] && rm "${filemenutmp}"; echo; exit 0" SIGTERM SIGINT
+
+
+declare -a sessions
+while IFS= read line; do
+	[ -e "$line" ] && sessions+=("$line")
+done
+
+if ((${#sessions} == 0)); then
+	echo "No files to list."
+	exit 0
+fi
+
+
+echo "${sessions[@]}" |
+xargs ls -t1d ${reverse:+"-r"} |
+while IFS= read line; do
+	echo "$line" >>${filemenutmp}
+done
+
+[ "$resume" ] || #don't output menu on resume
+nl -n'ln' -w1 -s'. ' "${filemenutmp}"
+
+
+#start reading stdin from tty instead of piped input!
+exec </dev/tty	
+
+menusize=$(wc -l "${filemenutmp}" | cut -d' ' -f1)
+responsedigit=1
+
+while true; do
+	if [ ! "$resume" ]; then
+		read -p"#> " response
+
+		[[ "$response" =~ ^e.*$ ]] && break
+
+		responsedigit=$(echo "$response" | tr -c -d "[:digit:]")
+	fi
+
+	(( responsedigit <= 0 )) || 
+	(( responsedigit > menusize )) &&
+	if [ $resume ]; then
+		echo "No more files."
+		break
+	else
+		continue
+	fi
+
+
+	#grab line $responsedigit from filemenutmp
+	finalfile="$(sed "${responsedigit}q;d" "${filemenutmp}")" 
+
+	if [ ! -e "${finalfile}" ]; then
+		echo "bad retreival from "${filemenutmp}""
+		echo "or "${finalfile}" does not exist."
+		exit 1
+	fi
+
+
+	base=$(basename "${finalfile}")
+	basedir="${finalfile%/"${base}"}"
+
+	cd "${basedir}"
+	"${SHELL}" #solidify cd for user
+
+
+	if [ "$persist" ]; then
+		if [ "$resume" ]; then
+			responsedigit=$(( $responsedigit + 1 ))
+			sleep 0.1
+		else
+			nl -n'ln' -w1 -s'. ' "${filemenutmp}"
+		fi
+	else
+		break
+	fi
+done
+
+rm "${filemenutmp}"
+
+
+
+
+
